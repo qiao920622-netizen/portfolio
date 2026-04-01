@@ -15,7 +15,7 @@ export default function Home() {
       <div style={{ background: '#0a0a0a', minHeight: '100vh', fontFamily: "'Inter', sans-serif", color: '#fff' }}>
         {/* Nav */}
         <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '32px 48px', position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100 }}>
-          <span style={{ fontWeight: 700, fontSize: '18px', letterSpacing: '0.05em' }}>GEO</span>
+          <img src="/geo_logo.png" alt="Geo" style={{ height: '36px', width: 'auto', filter: 'invert(1)' }} />
           <Link href="/works" style={{ color: '#fff', textDecoration: 'none', fontSize: '14px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Works</Link>
         </nav>
 

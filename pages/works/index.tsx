@@ -21,7 +21,7 @@ export default function Works() {
       <div style={{ background: '#fff', minHeight: '100vh', fontFamily: "'Inter', sans-serif" }}>
         {/* Nav */}
         <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '32px 48px', borderBottom: '1px solid #eee' }}>
-          <Link href="/" style={{ fontWeight: 700, fontSize: '18px', letterSpacing: '0.05em', color: '#000', textDecoration: 'none' }}>GEO</Link>
+          <Link href="/"><img src="/geo_logo.png" alt="Geo" style={{ height: '36px', width: 'auto' }} /></Link>
           <span style={{ fontSize: '14px', color: '#888', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Selected Works</span>
         </nav>
 
