@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>GEO Design Studio - Editorial Aesthetic</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Three.js 引擎 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <style>
+    /* 全局强制隐藏系统光标，并彻底阻断原生拖拽与文本选中行为 */
+    *, *::before, *::after, html, body, a, button, img, canvas { 
+      cursor: none !important; 
+      -webkit-user-drag: none;
+      -khtml-user-drag: none;
+      -moz-user-drag: none;
+      -o-user-drag: none;
+      user-drag: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    body { 
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; 
+      background-color: #F4F4F4; 
+      color: #111;
+      margin: 0;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* 解禁邮件地址的可复制性 */
+    .selectable-text {
+      user-select: text !important;
+      -webkit-user-select: text !important;
+    }
+    
+    ::-webkit-scrollbar { display: none; }
+    
+    .smooth-transition {
+      transition: all 0.7s cubic-bezier(0.19, 1, 0.22, 1);
+    }
+
+    .animate-fade-in {
+      animation: fadeIn 0.8s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    #webgl-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+      overflow: hidden;
+      touch-action: none; 
+    }
+
+    /* 悬停标题 */
+    .hover-title {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 10;
+      color: white;
+      mix-blend-mode: difference;
+      opacity: 0;
+      transition: opacity 0.4s ease; 
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .hover-title.active { opacity: 1; }
+    .hover-name {
+      font-size: 8vw;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .allow-scroll { overflow-y: auto !important; }
+    .no-scroll { overflow: hidden !important; }
+
+    /* 印刷噪点遮罩 */
+    .noise-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      pointer-events: none;
+      z-index: 99998;
+      opacity: 0.05;
+      background-image: url('data:image/svg+xml;utf8,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noiseFilter"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noiseFilter)"/%3E%3C/svg%3E');
+    }
+
+    /* 高级反色光标 (mix-blend-mode) */
+    #custom-cursor {
+      position: fixed;
+      top: 0; left: 0;
+      width: 12px; height: 12px;
+      background-color: white;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 999999;
+      mix-blend-mode: difference;
+      transform: translate3d(-100px, -100px, 0);
+      margin-top: -6px; margin-left: -6px;
+      transition: width 0.4s cubic-bezier(0.19, 1, 0.22, 1), height 0.4s cubic-bezier(0.19, 1, 0.22, 1), margin 0.4s cubic-bezier(0.19, 1, 0.22, 1), background-color 0.4s;
+      will-change: transform, width, height;
+      backface-visibility: hidden;
+    }
+    /* 悬停状态：完美的 反色 + 极弱毛玻璃 结合体验 */
+    #custom-cursor.hovered {
+      width: 64px; height: 64px;
+      margin-top: -32px; margin-left: -32px;
+      background-color: white; 
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      backdrop-filter: blur(1.5px);
+      -webkit-backdrop-filter: blur(1.5px);
+    }
+  </style>
+</head>
+<body class="no-scroll">
+  <div class="noise-overlay"></div>
+  <div id="custom-cursor" class="hidden md:block"></div>
+  
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const SPACING = 8;
+    
+    // 暴漏全局方法：由原生 DOM 直接调取以提升性能
+    window.setGlobalCursorHover = (isHovered) => {
+      const cursor = document.getElementById('custom-cursor');
+      if (cursor) {
+        if (isHovered) cursor.classList.add('hovered');
+        else cursor.classList.remove('hovered');
+      }
+    };
+
+    // --- 1. 项目数据 ---
+    const PROJECTS = [
+      { id: 'work1', title: 'Brand Manual', thumb: 'https://picsum.photos/seed/geobrand1/800/1200', images: ['https://picsum.photos/seed/geobrand1_1/1600/1000', 'https://picsum.photos/seed/geobrand1_2/1600/1000'], meta: { category: 'Editorial', year: '2026' }, descEn: 'Visual identity and layout design focusing on strict grid systems.', descZh: '专注于严谨网格系统的视觉识别与排版设计。', pos: { x: 0, y: 0, z: 0, width: 7, height: 4.5 } },
+      { id: 'work2', title: 'Digital Interface', thumb: 'https://picsum.photos/seed/geodigital/800/1200', images: ['https://picsum.photos/seed/geodigital_1/1600/1000'], meta: { category: 'Digital', year: '2026' }, descEn: 'Digital product interface with high contrast and typography-driven UI.', descZh: '高对比度且以排版驱动的数字产品界面设计。', pos: { x: 0, y: -SPACING * 1, z: 0, width: 5, height: 6.5 } },
+      { id: 'work3', title: 'Magazine Issue 04', thumb: 'https://picsum.photos/seed/geomag/800/1200', images: ['https://picsum.photos/seed/geomag_1/1600/1000'], meta: { category: 'Print', year: '2025' }, descEn: 'Editorial design for an independent lifestyle magazine.', descZh: '为独立生活方式杂志进行的编辑设计。', pos: { x: 0, y: -SPACING * 2, z: 0, width: 7, height: 4.5 } },
+      { id: 'work4', title: 'Spatial Concept', thumb: 'https://picsum.photos/seed/geospatial/800/1200', images: ['https://picsum.photos/seed/geospatial_1/1600/1000'], meta: { category: 'Exhibition', year: '2025' }, descEn: 'Spatial visual system and exhibition wayfinding.', descZh: '空间视觉系统与展览导视设计。', pos: { x: 0, y: -SPACING * 3, z: 0, width: 5, height: 6.5 } },
+      { id: 'work5', title: 'Modular Object', thumb: 'https://picsum.photos/seed/geomodular/800/1200', images: ['https://picsum.photos/seed/geomodular_1/1600/1000'], meta: { category: 'Product', year: '2024' }, descEn: 'Industrial and product design visualization.', descZh: '工业与产品设计视觉呈现。', pos: { x: 0, y: -SPACING * 4, z: 0, width: 7, height: 4.5 } },
+      { id: 'work6', title: 'Forward System', thumb: 'https://picsum.photos/seed/geosystem/800/1200', images: ['https://picsum.photos/seed/geosystem_1/1600/1000'], meta: { category: 'Identity', year: '2024' }, descEn: 'Brand identity system exploring the forward momentum of modern design.', descZh: '探索现代设计向前动力的品牌识别系统。', pos: { x: 0, y: -SPACING * 5, z: 0, width: 5, height: 6.5 } },
+      { id: 'work7', title: 'Kids Wear', thumb: 'https://picsum.photos/seed/geokids/800/1200', images: ['https://picsum.photos/seed/geokids_1/1600/1000'], meta: { category: 'Packaging', year: '2023' }, descEn: 'Playful yet highly structured packaging design.', descZh: '充满趣味却高度结构化的包装设计。', pos: { x: 0, y: -SPACING * 6, z: 0, width: 7, height: 4.5 } },
+      { id: 'work8', title: 'Typography Study', thumb: 'https://picsum.photos/seed/geotypo/800/1200', images: ['https://picsum.photos/seed/geotypo_1/1600/1000'], meta: { category: 'Typography', year: '2023' }, descEn: 'Custom typography design for corporate communication.', descZh: '专为企业沟通定制的字体排印设计。', pos: { x: 0, y: -SPACING * 7, z: 0, width: 5, height: 6.5 } },
+      { id: 'work9', title: 'Archive Book', thumb: 'https://picsum.photos/seed/geoarchive/800/1200', images: ['https://picsum.photos/seed/geoarchive_1/1600/1000'], meta: { category: 'Print', year: '2022' }, descEn: 'Experimental publication focusing on textual layouts.', descZh: '专注于文本排版的实验性出版物。', pos: { x: 0, y: -SPACING * 8, z: 0, width: 7, height: 4.5 } },
+      { id: 'work10', title: 'Soundscapes', thumb: 'https://picsum.photos/seed/geosound/800/1200', images: ['https://picsum.photos/seed/geosound_1/1600/1000'], meta: { category: 'Art Direction', year: '2021' }, descEn: 'Record sleeve designs treating sound as abstract visual.', descZh: '将声音视为抽象视觉构成的唱片封套设计。', pos: { x: 0, y: -SPACING * 9, z: 0, width: 5, height: 6.5 } }
+    ];
+
+    // --- 2. 摄影画廊数据 ---
+    const PHOTO_DATA = Array.from({ length: 24 }).map((_, i) => {
+      const ratios = [
+        { w: 800, h: 1200 }, { w: 1200, h: 800 }, { w: 1000, h: 1000 },
+        { w: 900, h: 1200 }, { w: 1200, h: 650 },
+      ];
+      const ratio = ratios[i % ratios.length];
+      
+      return {
+        thumbUrl: `https://picsum.photos/seed/geophoto_${i}/${ratio.w}/${ratio.h}`,
+        largeUrl: `https://picsum.photos/seed/geophoto_${i}/${ratio.w * 2}/${ratio.h * 2}`,
+        w: ['45%', '22%', '38%', '15%', '28%', '55%', '20%', '30%', '25%', '40%', '18%', '35%'][i % 12],
+        ml: ['5%', '68%', '32%', '10%', '65%', '20%', '75%', '5%', '40%', '55%', '15%', '60%'][i % 12],
+        mt: ['0%', '-25%', '10%', '-15%', '-5%', '20%', '-35%', '15%', '-10%', '5%', '25%', '-20%'][i % 12],
+        z: (i % 3) * 10
+      };
+    });
+
+    // --- 安全图片组件 ---
+    const SafeImage = ({ src, className, alt }) => {
+      const [error, setError] = useState(false);
+      const [loaded, setLoaded] = useState(false);
+
+      useEffect(() => {
+        setLoaded(false);
+        setError(false);
+      }, [src]);
+
+      let aspectRatioStyle = {};
+      try {
+        const parts = src.split('?')[0].split('/');
+        const h = parseInt(parts.pop(), 10);
+        const w = parseInt(parts.pop(), 10);
+        if (!isNaN(w) && !isNaN(h)) {
+          aspectRatioStyle = { aspectRatio: `${w} / ${h}` };
+        }
+      } catch (e) {}
+
+      if (error) return (
+        <div 
+          className={`bg-[#E0E0E0] flex items-center justify-center text-[10px] tracking-widest text-gray-500 uppercase ${className}`}
+          style={aspectRatioStyle}
+        >
+          Image Unavailable
+        </div>
+      );
+      
+      return (
+        <div className={`relative overflow-hidden bg-[#EAEAEA] ${className}`} style={aspectRatioStyle}>
+          <div className={`absolute inset-0 bg-[#EAEAEA] z-10 transition-opacity duration-[1.2s] ease-[cubic-bezier(0.19,1,0.22,1)] ${loaded ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}></div>
+          <img 
+            src={src} 
+            alt={alt} 
+            className={`block w-full h-full object-cover transition-opacity duration-1000 ease-out ${loaded ? 'opacity-100' : 'opacity-0'}`} 
+            onLoad={() => setLoaded(true)}
+            onError={() => setError(true)}
+            loading="lazy"
+            draggable="false"
+          />
+        </div>
+      );
+    };
+
+    // ====== GLSL 着色器 ======
+    const vertexShader = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const fragmentShader = `
+      uniform sampler2D tDiffuse;
+      uniform float uHover;
+      uniform float uOpacity;
+      varying vec2 vUv;
+
+      void main() {
+        vec4 texColor = texture2D(tDiffuse, vUv);
+        float gray = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 finalColor = mix(vec3(gray), texColor.rgb, uHover);
+        gl_FragColor = vec4(finalColor, texColor.a * uOpacity);
+      }
+    `;
+
+    // ====== WebGL 3D 画廊组件 ======
+    const WebGLGallery = ({ onSelectProject, isVisible, setLoadProgress }) => {
+      const mountRef = useRef(null);
+      const [hoveredProject, setHoveredProject] = useState(null);
+      const [mousePos, setMousePos] = useState({ x: 0, y: 0 }); 
+      
+      // 核心修复：通过 Refs 保存动态属性，使得 React 的更新无法干扰 3D 引擎的底层运转
+      const isVisibleRef = useRef(isVisible);
+      const onSelectProjectRef = useRef(onSelectProject);
+      const setLoadProgressRef = useRef(setLoadProgress);
+
+      useEffect(() => { isVisibleRef.current = isVisible; }, [isVisible]);
+      useEffect(() => { onSelectProjectRef.current = onSelectProject; }, [onSelectProject]);
+      useEffect(() => { setLoadProgressRef.current = setLoadProgress; }, [setLoadProgress]);
+
+      useEffect(() => {
+        let reqId;
+        const container = mountRef.current;
+        if (!container) return;
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2('#F4F4F4', 0.015);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 11;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        const manager = new THREE.LoadingManager();
+        manager.onProgress = (url, itemsLoaded, itemsTotal) => {
+          if (setLoadProgressRef.current) {
+             setLoadProgressRef.current((itemsLoaded / itemsTotal) * 100);
+          }
+        };
+        const textureLoader = new THREE.TextureLoader(manager);
+        textureLoader.setCrossOrigin('anonymous');
+        
+        const meshes = [];
+        
+        PROJECTS.forEach((project, index) => {
+          const geometry = new THREE.PlaneGeometry(project.pos.width, project.pos.height);
+          const material = new THREE.ShaderMaterial({
+            uniforms: {
+              tDiffuse: { value: null }, 
+              uHover: { value: 0.0 },    
+              uOpacity: { value: 1.0 }   
+            },
+            vertexShader,
+            fragmentShader,
+            transparent: true,
+          });
+          
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.position.set(project.pos.x, project.pos.y, project.pos.z);
+          mesh.userData = { id: project.id, index, title: project.title, year: project.meta.year };
+          
+          scene.add(mesh);
+          meshes.push(mesh);
+
+          textureLoader.load(project.thumb, (texture) => {
+            texture.generateMipmaps = true;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            material.uniforms.tDiffuse.value = texture;
+          });
+        });
+
+        let targetCameraY = 0;
+        const maxScroll = -(PROJECTS.length - 1) * SPACING;
+        
+        let mouse = new THREE.Vector2(-999, -999); 
+        let targetMouse = new THREE.Vector2(0, 0);
+        const raycaster = new THREE.Raycaster();
+        
+        let currentHover = null;
+        let localTransitionLock = false; 
+
+        const onWheel = (e) => {
+          if (!isVisibleRef.current) return; 
+          targetCameraY -= e.deltaY * 0.015;
+          targetCameraY = Math.max(maxScroll - 2, Math.min(targetCameraY, 2)); 
+        };
+
+        const onMouseMove = (e) => {
+          if (!isVisibleRef.current) return;
+          mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+          mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+          targetMouse.x = mouse.x;
+          targetMouse.y = mouse.y;
+
+          setMousePos({
+            x: (e.clientX - window.innerWidth / 2) * 0.08,
+            y: (e.clientY - window.innerHeight / 2) * 0.08
+          });
+        };
+
+        let touchStartY = 0;
+        const onTouchStart = (e) => {
+          if (!isVisibleRef.current || e.touches.length === 0) return;
+          touchStartY = e.touches[0].clientY;
+          mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+          mouse.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+        };
+
+        const onTouchMove = (e) => {
+          if (!isVisibleRef.current || e.touches.length === 0) return;
+          const currentY = e.touches[0].clientY;
+          const deltaY = touchStartY - currentY;
+          targetCameraY -= deltaY * 0.025; 
+          targetCameraY = Math.max(maxScroll - 2, Math.min(targetCameraY, 2)); 
+          touchStartY = currentY;
+        };
+
+        const onClick = (e) => {
+          if (!isVisibleRef.current || localTransitionLock) return; 
+          if (e.target.tagName !== 'CANVAS') return; 
+
+          if (currentHover !== null) {
+            const proj = PROJECTS.find(p => p.id === currentHover.userData.id);
+            if (proj) {
+              localTransitionLock = true; // 锁定 3D 悬浮态
+              if (onSelectProjectRef.current) onSelectProjectRef.current(proj);
+              window.setGlobalCursorHover(false); // 隐藏光标，但图片依旧保持彩色缩放
+            }
+          }
+        };
+
+        window.addEventListener('wheel', onWheel, { passive: true });
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('touchstart', onTouchStart, { passive: true });
+        window.addEventListener('touchmove', onTouchMove, { passive: true });
+        window.addEventListener('click', onClick);
+
+        const onResize = () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        };
+        window.addEventListener('resize', onResize);
+
+        const animate = () => {
+          reqId = requestAnimationFrame(animate);
+
+          camera.position.y += (targetCameraY - camera.position.y) * 0.08;
+          camera.position.x += (targetMouse.x * 0.5 - camera.position.x) * 0.05;
+          camera.lookAt(camera.position.x * 0.5, camera.position.y, 0);
+
+          if (isVisibleRef.current) {
+            // 未锁定时，根据射线正常聚焦
+            if (!localTransitionLock) {
+              raycaster.setFromCamera(mouse, camera);
+              const intersects = raycaster.intersectObjects(meshes);
+
+              if (intersects.length > 0) {
+                const object = intersects[0].object;
+                if (currentHover !== object) {
+                  currentHover = object;
+                  setHoveredProject(PROJECTS.find(p => p.id === object.userData.id));
+                  window.setGlobalCursorHover(true);
+                }
+              } else {
+                if (currentHover !== null) {
+                  currentHover = null;
+                  setHoveredProject(null);
+                  window.setGlobalCursorHover(false);
+                }
+              }
+            }
+          } else {
+            // 只有当 isVisible 真正变更为 false (幕布彻底挡死后)，才无声无息地解除锁定和焦点
+            currentHover = null; 
+            localTransitionLock = false; 
+          }
+
+          meshes.forEach(mesh => {
+            const isHovered = currentHover === mesh;
+            const isAnyHovered = currentHover !== null;
+            
+            const targetScale = isHovered ? 1.05 : 1.0;
+            const targetOpacity = isAnyHovered ? (isHovered ? 1.0 : 0.15) : 1.0;
+            const targetHoverVal = isHovered ? 1.0 : 0.0; 
+            const targetZ = isHovered ? 1.5 : 0; 
+
+            mesh.scale.x += (targetScale - mesh.scale.x) * 0.1;
+            mesh.scale.y += (targetScale - mesh.scale.y) * 0.1;
+            mesh.position.z += (targetZ - mesh.position.z) * 0.1;
+            
+            mesh.material.uniforms.uOpacity.value += (targetOpacity - mesh.material.uniforms.uOpacity.value) * 0.1;
+            mesh.material.uniforms.uHover.value += (targetHoverVal - mesh.material.uniforms.uHover.value) * 0.08;
+          });
+
+          renderer.render(scene, camera);
+        };
+
+        animate();
+
+        return () => {
+          window.removeEventListener('wheel', onWheel);
+          window.removeEventListener('mousemove', onMouseMove);
+          window.removeEventListener('touchstart', onTouchStart);
+          window.removeEventListener('touchmove', onTouchMove);
+          window.removeEventListener('click', onClick);
+          window.removeEventListener('resize', onResize);
+          cancelAnimationFrame(reqId);
+          if (container && renderer.domElement) container.removeChild(renderer.domElement);
+          window.setGlobalCursorHover(false);
+        };
+      }, []); // 核心修复：空依赖数组，引擎只挂载渲染一次，绝不重建！
+
+      return (
+        <div className={`transition-opacity duration-700 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          <div ref={mountRef} id="webgl-container"></div>
+          
+          <div 
+            className={`hover-title ${hoveredProject && isVisible ? 'active' : ''} hidden md:flex`}
+            style={{ transform: `translate(calc(-50% - ${mousePos.x}px), calc(-50% - ${mousePos.y}px))` }}
+          >
+            {hoveredProject && (
+              <div className="hover-name">{hoveredProject.title}</div>
+            )}
+          </div>
+          
+          <div className={`fixed bottom-8 left-1/2 -translate-x-1/2 text-[10px] md:text-[11px] font-medium text-black md:text-white md:mix-blend-difference opacity-50 pointer-events-none z-10 transition-opacity ${isVisible ? 'block' : 'hidden'}`}>
+            Scroll to explore
+          </div>
+        </div>
+      );
+    };
+
+    // ====== 主应用 ======
+    function App() {
+      const [activeTab, setActiveTab] = useState('projects'); 
+      const [selectedProject, setSelectedProject] = useState(null);
+      const [lightboxImage, setLightboxImage] = useState(null);
+      
+      const [loadProgress, setLoadProgress] = useState(0);
+      const [isAppReady, setIsAppReady] = useState(false);
+      
+      const [transitionTarget, setTransitionTarget] = useState(null); 
+      const isTransitioning = transitionTarget !== null;
+
+      const handleGlobalMouseMove = (e) => {
+        const cursor = document.getElementById('custom-cursor');
+        if (cursor) cursor.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
+      };
+
+      const handleGlobalMouseOver = (e) => {
+        if (e.target.tagName === 'CANVAS') return;
+        if (e.target.closest('a, button, img, .hover-target')) {
+          window.setGlobalCursorHover(true);
+        }
+      };
+
+      const handleGlobalMouseOut = (e) => {
+        if (e.target.tagName === 'CANVAS') return;
+        if (e.target.closest('a, button, img, .hover-target')) {
+          window.setGlobalCursorHover(false);
+        }
+      };
+
+      useEffect(() => {
+        if (loadProgress >= 100 && !isAppReady) {
+          setTimeout(() => setIsAppReady(true), 600);
+        }
+      }, [loadProgress]);
+
+      useEffect(() => {
+        if ((activeTab === 'projects' && !selectedProject) || lightboxImage || !isAppReady || isTransitioning) {
+          document.body.className = 'no-scroll';
+        } else {
+          document.body.className = 'allow-scroll';
+        }
+      }, [activeTab, selectedProject, lightboxImage, isAppReady, isTransitioning]);
+
+      // === 核心：页面优雅路由切换机制 ===
+      const handleNavigation = (targetMetadata, callback) => {
+        if (isTransitioning) return; 
+        
+        window.setGlobalCursorHover(false);
+        setTransitionTarget(targetMetadata); 
+        
+        setTimeout(() => {
+          callback(); 
+          window.scrollTo({ top: 0, behavior: 'instant' });
+          
+          setTimeout(() => {
+            setTransitionTarget(null); 
+          }, 100);
+        }, 600);
+      };
+
+      const handleTabSwitch = (tab) => {
+        if (activeTab === tab && !selectedProject) return;
+        handleNavigation({ type: 'tab', id: tab }, () => {
+          setActiveTab(tab);
+          setSelectedProject(null);
+        });
+      };
+
+      const handleProjectSelect = (project) => {
+        if (selectedProject?.id === project.id) return;
+        handleNavigation({ type: 'project', id: project.id }, () => {
+          setSelectedProject(project);
+        });
+      };
+
+      const NavButton = ({ id, label }) => {
+        const isTargetActive = transitionTarget?.type === 'tab' && transitionTarget?.id === id;
+        const isCurrentlyActive = activeTab === id && !selectedProject;
+        const isActive = isTargetActive || (isCurrentlyActive && !transitionTarget);
+        
+        return (
+          <div 
+            onClick={() => handleTabSwitch(id)}
+            className={`hover-target cursor-none pointer-events-auto py-2 md:py-0 flex items-center smooth-transition ${isActive ? 'opacity-100' : 'opacity-40 hover:opacity-100'}`}
+          >
+            <span className="text-[11px] md:text-[12px] font-medium tracking-normal whitespace-nowrap">{label}</span>
+          </div>
+        );
+      };
+
+      return (
+        <div 
+          className="flex flex-col min-h-screen relative"
+          onMouseMove={handleGlobalMouseMove}
+          onMouseOver={handleGlobalMouseOver}
+          onMouseOut={handleGlobalMouseOut}
+        >
+          
+          {/* --- 初始 Loading Screen --- */}
+          {!isAppReady && (
+            <div 
+              className={`fixed inset-0 z-[99999] bg-[#F4F4F4] flex items-center justify-center transition-opacity duration-1000 ease-in-out opacity-100`}
+            >
+              <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.2em] font-medium text-gray-500">
+                 <span className="animate-pulse">Loading Archive</span>
+                 <span className="text-black w-6 text-right">{Math.round(loadProgress)}%</span>
+              </div>
+            </div>
+          )}
+
+          {/* --- 页面路由切换缓冲幕布 --- */}
+          <div 
+            className={`fixed inset-0 z-[99998] bg-[#F4F4F4] transition-opacity duration-[600ms] ease-[cubic-bezier(0.85,0,0.15,1)] ${isTransitioning ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+          ></div>
+
+          <header className="fixed top-6 md:top-8 left-6 right-6 md:left-10 md:right-10 z-[9999] pointer-events-none mix-blend-difference text-white flex justify-between items-start">
+            <div className="flex flex-wrap gap-5 md:gap-8 pointer-events-auto">
+               <NavButton id="projects" label="Projects" />
+               <NavButton id="photography" label="Photography" />
+               <NavButton id="studio" label="Studio" />
+            </div>
+            <div className="pointer-events-auto">
+               <NavButton id="contact" label="Contact" />
+            </div>
+          </header>
+
+          <main className="flex-grow w-full relative">
+            
+            <WebGLGallery 
+              isVisible={activeTab === 'projects' && !selectedProject} 
+              onSelectProject={handleProjectSelect}
+              setLoadProgress={setLoadProgress}
+            />
+
+            {selectedProject && (
+              <div className="w-full bg-[#F4F4F4] z-20 relative min-h-screen pb-0 pt-32 md:pt-40">
+                <div className="w-full h-[60vh] md:h-[85vh] px-4 md:px-8">
+                  <SafeImage key={`hero-${selectedProject.id}`} src={selectedProject.thumb} className="hover-target w-full h-full object-cover" alt="Hero" />
+                </div>
+                
+                <div className="px-6 md:px-12 py-24 md:py-32 grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12">
+                  <div className="md:col-span-6">
+                    <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-none mb-10 text-black">{selectedProject.title}</h1>
+                    <div className="text-[11px] font-medium flex flex-col gap-3 text-gray-500 pt-6 max-w-xs">
+                      <div className="flex justify-between"><span>Category</span><span className="text-black">{selectedProject.meta.category}</span></div>
+                      <div className="flex justify-between"><span>Year</span><span className="text-black">{selectedProject.meta.year}</span></div>
+                    </div>
+                  </div>
+                  <div className="md:col-span-6 text-base md:text-xl leading-[1.6] font-normal pt-2 md:pt-4 text-black/80">
+                    <p className="mb-10">{selectedProject.descEn}</p>
+                    <p className="text-sm md:text-[15px] text-gray-500 leading-relaxed">{selectedProject.descZh}</p>
+                  </div>
+                </div>
+
+                <div className="w-full flex flex-col gap-12 md:gap-32 px-4 md:px-12 pb-24 md:pb-40">
+                  {selectedProject.images.map((img, idx) => (
+                    <div key={`img-container-${selectedProject.id}-${idx}`} className="w-full min-h-[300px]">
+                       <SafeImage key={`img-${selectedProject.id}-${idx}`} src={img} className="hover-target w-full object-cover" />
+                    </div>
+                  ))}
+                </div>
+                
+                {(() => {
+                  const currentIndex = PROJECTS.findIndex(p => p.id === selectedProject.id);
+                  const nextProject = PROJECTS[(currentIndex + 1) % PROJECTS.length];
+                  const isTargetNextProj = transitionTarget?.type === 'project' && transitionTarget?.id === nextProject.id;
+                  
+                  return (
+                    <div 
+                      className={`hover-target cursor-none w-full h-[30vh] md:h-[40vh] flex flex-col items-center justify-center transition-colors duration-500 ${isTargetNextProj ? 'bg-[#FAFAFA]' : 'bg-white hover:bg-[#FAFAFA] group'}`}
+                      onClick={() => handleProjectSelect(nextProject)}
+                    >
+                      <span className={`text-[11px] font-medium mb-4 transition-colors duration-500 ${isTargetNextProj ? 'text-gray-600' : 'text-gray-400 group-hover:text-gray-600'}`}>Next Project</span>
+                      <span className={`text-black font-bold text-3xl md:text-4xl tracking-tight transition-transform duration-700 text-center px-4 ${isTargetNextProj ? 'scale-105' : 'transform group-hover:scale-105'}`}>{nextProject.title}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Photography: 默认黑白，hover恢复彩色 */}
+            {activeTab === 'photography' && !selectedProject && (
+              <div className="w-full min-h-screen bg-[#F4F4F4] pt-40 px-6 md:px-12 pb-48 z-20 relative overflow-hidden">
+                <h2 className="text-5xl md:text-[7vw] font-bold tracking-tight leading-none mb-32 text-black">Moments</h2>
+                
+                <div className="relative w-full max-w-7xl mx-auto flex flex-col pb-32">
+                  {PHOTO_DATA.map((photo, idx) => {
+                    const isOpened = lightboxImage === photo.largeUrl;
+                    
+                    return (
+                      <div
+                        key={idx}
+                        className="hover-target cursor-none relative group"
+                        style={{ width: photo.w, marginLeft: photo.ml, marginTop: photo.mt, zIndex: photo.z }}
+                        onClick={() => setLightboxImage(photo.largeUrl)}
+                      >
+                        <SafeImage
+                          src={photo.thumbUrl}
+                          className={`w-full object-cover shadow-sm transition-all duration-700 ease-out ${isOpened ? 'grayscale-0 scale-[1.02] shadow-2xl relative z-50' : 'grayscale group-hover:grayscale-0 hover:scale-[1.02] hover:shadow-2xl'}`}
+                          alt={`Moment ${idx + 1}`}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'studio' && !selectedProject && (
+              <div className="w-full min-h-screen bg-[#F4F4F4] pt-40 md:pt-48 pb-32 z-20 relative">
+                 <div className="px-6 md:px-12">
+                   <h1 className="text-5xl md:text-[6.5vw] font-bold tracking-tight leading-[1] mb-24 md:mb-32 text-black">
+                     Independent<br/>Design Studio.
+                   </h1>
+                   <div className="grid grid-cols-1 md:grid-cols-12 gap-16 text-base md:text-xl font-normal text-black/80">
+                     <div className="md:col-span-5 leading-[1.6]">
+                       <p className="mb-10">GEO is an independent design studio founded in 2026. We focus on visual identity, editorial design, and spatial graphics. Embracing rationality and minimalism, we aim to build clear and structured visual systems.</p>
+                       <p className="text-gray-500 text-sm md:text-[15px] leading-relaxed">GEO 是一家成立于2026年的独立设计工作室。我们专注于视觉识别、编辑设计以及空间视觉。拥抱理性与极简主义，我们致力于构建清晰且具有结构感的视觉系统。</p>
+                     </div>
+                     <div className="md:col-span-5 md:col-start-8 flex flex-col gap-12 md:gap-16">
+                       <div>
+                         <div className="text-[11px] font-medium text-gray-400 mb-4 border-b border-black/10 pb-3">Capabilities</div>
+                         <ul className="space-y-3 text-sm md:text-lg font-medium text-black">
+                           <li className="hover-target cursor-none transition-opacity hover:opacity-50">Brand Identity</li>
+                           <li className="hover-target cursor-none transition-opacity hover:opacity-50">Editorial & Print</li>
+                           <li className="hover-target cursor-none transition-opacity hover:opacity-50">Digital Experiences</li>
+                           <li className="hover-target cursor-none transition-opacity hover:opacity-50">Spatial Wayfinding</li>
+                         </ul>
+                       </div>
+                       <div>
+                         <div className="text-[11px] font-medium text-gray-400 mb-4 border-b border-black/10 pb-3">Selected Clients</div>
+                         <ul className="space-y-3 text-sm md:text-lg font-medium text-black">
+                           <li className="hover-target cursor-none transition-opacity hover:opacity-50">Studio Dummy</li>
+                           <li className="hover-target cursor-none transition-opacity hover:opacity-50">Modern Art Museum</li>
+                           <li className="hover-target cursor-none transition-opacity hover:opacity-50">Tech Future Inc.</li>
+                         </ul>
+                       </div>
+                     </div>
+                   </div>
+                 </div>
+              </div>
+            )}
+
+            {activeTab === 'contact' && !selectedProject && (
+              <div className="w-full min-h-screen bg-[#F4F4F4] pt-40 px-6 md:px-12 pb-32 z-20 relative flex flex-col justify-center">
+                 <div className="max-w-7xl mx-auto w-full flex-grow flex flex-col justify-center py-32">
+                    <h2 className="text-[11px] font-medium mb-8 text-gray-400">Get in touch</h2>
+                    <a 
+                      href="mailto:hello@geo-design.com" 
+                      className="hover-target cursor-none selectable-text text-4xl md:text-[6vw] font-bold tracking-tight text-black block leading-[1] hover:opacity-50 transition-opacity"
+                    >
+                      hello@geo-<br/>design.com
+                    </a>
+                 </div>
+              </div>
+            )}
+          </main>
+
+          {/* === 全屏画廊 Lightbox === */}
+          {lightboxImage && (
+            <div 
+              className="cursor-none fixed inset-0 z-[100000] bg-[#F4F4F4]/95 backdrop-blur-md flex flex-col items-center justify-center p-4 md:p-12 animate-fade-in"
+              onClick={() => {
+                setLightboxImage(null);
+                window.setGlobalCursorHover(false); 
+              }}
+            >
+              <div className="absolute top-10 left-1/2 -translate-x-1/2 text-[10px] font-medium uppercase tracking-[0.2em] text-gray-400 pointer-events-none">Click anywhere to close</div>
+              <img 
+                src={lightboxImage} 
+                alt="Enlarged view" 
+                className="hover-target max-w-full max-h-full object-contain shadow-2xl transition-transform duration-700 ease-out transform scale-100" 
+                onClick={(e) => e.stopPropagation()}
+                draggable="false"
+              />
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
